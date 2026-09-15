@@ -1,0 +1,1 @@
+CREATE INDEX `idx_assignments_completed_due_at` ON `assignments` (`completed`,`due_at`);

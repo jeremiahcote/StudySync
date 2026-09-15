@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788998117154,
+      "tag": "0000_past_magus",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1788998145236,
+      "tag": "0001_dry_moira_mactaggert",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789002434260,
+      "tag": "0002_redundant_drax",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1789066859944,
+      "tag": "0003_adorable_fenris",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1789075222784,
+      "tag": "0004_flashy_korvac",
+      "breakpoints": true
+    }
+  ]
+}

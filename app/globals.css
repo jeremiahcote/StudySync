@@ -1,0 +1,107 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "../vendor/shadcn-tailwind-4.13.0.css";
+
+@utility scrollbar-thin {
+  scrollbar-width: thin;
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility scrollbar-gutter-stable {
+  scrollbar-gutter: stable;
+}
+
+:root {
+  --background: #edf2f4;
+  --foreground: #102b3a;
+  --card: #ffffff;
+  --card-foreground: #173746;
+  --popover: #ffffff;
+  --popover-foreground: #173746;
+  --primary: #0d2b3a;
+  --primary-foreground: #ffffff;
+  --secondary: #e7f3f0;
+  --secondary-foreground: #176052;
+  --muted: #e8eff1;
+  --muted-foreground: #718994;
+  --accent: #dff5f0;
+  --accent-foreground: #176052;
+  --destructive: #c84b40;
+  --border: #dce7e9;
+  --input: #dce7e9;
+  --ring: #62d2be;
+  --chart-1: #62d2be;
+  --chart-2: #e8b84d;
+  --chart-3: #e56b5d;
+  --chart-4: #5f8de0;
+  --chart-5: #9a77c8;
+  --radius: 0.75rem;
+  --sidebar: #0d2b3a;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #62d2be;
+  --sidebar-primary-foreground: #0d2b3a;
+  --sidebar-accent: #1b4a5b;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #285263;
+  --sidebar-ring: #62d2be;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: Arial, Helvetica, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
