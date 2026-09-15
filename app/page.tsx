@@ -185,6 +185,12 @@ const STUDY_RANGE_LABELS: Record<StudyRange, string> = {
   all: "Everything",
 };
 
+const STUDY_RANGE_STORAGE_KEY = "studysync_study_range";
+
+function isStudyRange(value: unknown): value is StudyRange {
+  return value === "day" || value === "week" || value === "all";
+}
+
 function formatDueDate(value: string) {
   const date = new Date(value);
   if (isToday(date)) return "Today";
@@ -1403,6 +1409,16 @@ export default function Home() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [studyRange, setStudyRange] = useState<StudyRange>("all");
+
+  useEffect(() => {
+    const stored = window.localStorage.getItem(STUDY_RANGE_STORAGE_KEY);
+    if (isStudyRange(stored)) setStudyRange(stored);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(STUDY_RANGE_STORAGE_KEY, studyRange);
+  }, [studyRange]);
+
   const [courseColorOverrides, setCourseColorOverrides] = useState<{
     userId: string;
     colors: CourseColors;
@@ -1532,6 +1548,11 @@ export default function Home() {
     if (studyRange === "week") return dueThisWeek;
     return activeAssignments;
   }, [studyRange, dueToday, dueThisWeek, activeAssignments]);
+
+  const studyRangeAssignmentIds = useMemo(
+    () => (studyRange === "all" ? null : new Set(studyRangeAssignments.map((assignment) => assignment.id))),
+    [studyRange, studyRangeAssignments],
+  );
 
   const estimatedMinutes = useMemo(
     () =>
@@ -2104,10 +2125,13 @@ export default function Home() {
                       {sortedAssignments.map((assignment) => {
                         const overdue = isOverdue(assignment.dueAt);
                         const courseColor = getCourseColor(assignment.course, courseColors);
+                        const inStudyRange = studyRangeAssignmentIds?.has(assignment.id) ?? false;
                         return (
                           <article
                             key={assignment.id}
-                            className="flex gap-4 border-b border-[#edf2f4] px-5 py-5 last:border-b-0 sm:px-6"
+                            className={`flex gap-4 border-b border-[#edf2f4] px-5 py-5 last:border-b-0 sm:px-6 ${
+                              inStudyRange ? "bg-[#f2fbf9] ring-1 ring-inset ring-[#62d2be]" : ""
+                            }`}
                           >
                             <Checkbox
                               checked={false}
@@ -2131,6 +2155,11 @@ export default function Home() {
                                 {overdue ? (
                                   <Badge variant="outline" className="border-[#f39a8e] bg-[#fff0ed] font-bold uppercase tracking-[0.08em] text-[#b52f25]">
                                     Overdue
+                                  </Badge>
+                                ) : null}
+                                {inStudyRange ? (
+                                  <Badge variant="outline" className="border-[#62d2be] bg-[#eefbf7] font-bold uppercase tracking-[0.08em] text-[#176052]">
+                                    {studyRange === "day" ? "Due today" : "Due this week"}
                                   </Badge>
                                 ) : null}
                               </div>
