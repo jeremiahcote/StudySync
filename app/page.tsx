@@ -21,6 +21,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  Target,
   UserRound,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -82,7 +83,7 @@ import {
 import { StudySyncLogo } from "@/components/studysync-logo";
 
 type DuePeriod = "AM" | "PM";
-type PlannerView = "planner" | "calendar" | "completed" | "reminders" | "account";
+type PlannerView = "planner" | "plan" | "calendar" | "completed" | "reminders" | "account";
 type CourseColors = Record<string, string>;
 
 type Assignment = {
@@ -138,6 +139,7 @@ const blankForm: AssignmentForm = {
 
 const navigationItems: Array<{ id: PlannerView; label: string; icon: LucideIcon }> = [
   { id: "planner", label: "Planner", icon: LayoutDashboard },
+  { id: "plan", label: "Study plan", icon: Target },
   { id: "calendar", label: "Calendar", icon: CalendarDays },
   { id: "completed", label: "Completed", icon: CheckCircle2 },
   { id: "reminders", label: "Reminders", icon: Bell },
@@ -1398,6 +1400,332 @@ function RemindersView({ client, email, metadata, accessToken }: RemindersViewPr
   );
 }
 
+const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DEFAULT_DAILY_MINUTES = 120;
+const PLAN_HORIZON_DAYS = 7;
+
+function availabilityFromMetadata(metadata: Record<string, unknown>): number[] {
+  const stored = metadata.studysync_availability;
+  const base = Array.from({ length: 7 }, () => DEFAULT_DAILY_MINUTES);
+  if (!Array.isArray(stored)) return base;
+  return base.map((fallback, index) => {
+    const value = stored[index];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1440
+      ? Math.round(value)
+      : fallback;
+  });
+}
+
+function hoursUntilDue(dueAt: string) {
+  return (new Date(dueAt).getTime() - Date.now()) / 3_600_000;
+}
+
+// Higher score = work on it sooner. Overdue always outranks upcoming work; otherwise
+// the score is how much effort the assignment needs per hour of calendar time left,
+// so a long assignment due soon outranks a short one due at the same time.
+function recommendationScore(assignment: Assignment) {
+  const hours = hoursUntilDue(assignment.dueAt);
+  if (!Number.isFinite(hours)) return 0;
+  if (hours <= 0) return 10_000 - hours;
+  return ((assignment.estimatedMinutes / 60) / hours) * 100;
+}
+
+function recommendationReason(assignment: Assignment) {
+  const hours = hoursUntilDue(assignment.dueAt);
+  const effort = formatStudyTime(assignment.estimatedMinutes);
+  if (hours <= 0) return `Overdue · needs ${effort}`;
+  if (hours < 24) return `Due in under a day · needs ${effort}`;
+  const days = Math.round(hours / 24);
+  const tight = assignment.estimatedMinutes / 60 > hours / 4;
+  return `Due in ${days} ${days === 1 ? "day" : "days"} · needs ${effort}${tight ? " · tight fit" : ""}`;
+}
+
+type ScheduledBlock = { assignment: Assignment; minutes: number };
+type ScheduledDay = { date: Date; capacity: number; blocks: ScheduledBlock[]; used: number };
+
+function buildStudySchedule(assignments: Assignment[], availability: number[]) {
+  const queue = [...assignments]
+    .sort((first, second) => new Date(first.dueAt).getTime() - new Date(second.dueAt).getTime())
+    .map((assignment) => ({ assignment, remaining: assignment.estimatedMinutes }));
+
+  const days: ScheduledDay[] = [];
+  for (let offset = 0; offset < PLAN_HORIZON_DAYS; offset += 1) {
+    const date = new Date();
+    date.setDate(date.getDate() + offset);
+    date.setHours(0, 0, 0, 0);
+
+    const capacity = availability[date.getDay()] ?? DEFAULT_DAILY_MINUTES;
+    let remainingCapacity = capacity;
+    const blocks: ScheduledBlock[] = [];
+
+    for (const item of queue) {
+      if (remainingCapacity <= 0) break;
+      if (item.remaining <= 0) continue;
+
+      const overdue = isOverdue(item.assignment.dueAt);
+      if (overdue && offset > 0) continue;
+      if (!overdue) {
+        const dueDayEnd = new Date(item.assignment.dueAt);
+        dueDayEnd.setHours(23, 59, 59, 999);
+        if (date > dueDayEnd) continue;
+      }
+
+      const minutes = Math.min(item.remaining, remainingCapacity);
+      blocks.push({ assignment: item.assignment, minutes });
+      item.remaining -= minutes;
+      remainingCapacity -= minutes;
+    }
+
+    days.push({ date, capacity, blocks, used: capacity - remainingCapacity });
+  }
+
+  return { days, unscheduled: queue.filter((item) => item.remaining > 0).map((item) => item.assignment) };
+}
+
+type StudyPlanViewProps = {
+  client: SupabaseClient;
+  assignments: Assignment[];
+  courseColors: CourseColors;
+  metadata: Record<string, unknown>;
+};
+
+function StudyPlanView({ client, assignments, courseColors, metadata }: StudyPlanViewProps) {
+  const [availability, setAvailability] = useState(() => availabilityFromMetadata(metadata));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const activeAssignments = useMemo(
+    () => assignments.filter((assignment) => !isComplete(assignment)),
+    [assignments],
+  );
+
+  const ranked = useMemo(
+    () => [...activeAssignments].sort((first, second) => recommendationScore(second) - recommendationScore(first)),
+    [activeAssignments],
+  );
+
+  const schedule = useMemo(
+    () => buildStudySchedule(activeAssignments, availability),
+    [activeAssignments, availability],
+  );
+
+  const weeklyCapacity = availability.reduce((total, minutes) => total + minutes, 0);
+  const weeklyWorkload = activeAssignments.reduce((total, a) => total + a.estimatedMinutes, 0);
+
+  async function saveAvailability() {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await client.auth.updateUser({
+        data: { ...metadata, studysync_availability: availability },
+      });
+      if (result.error) throw result.error;
+      setNotice("Your study availability has been saved.");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "We could not save your availability.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mx-auto max-w-5xl">
+      <div>
+        <p className="mb-2 text-sm font-semibold text-[#2f9584]">Study plan</p>
+        <h1 className="text-[clamp(2rem,4vw,3.3rem)] font-bold leading-[1.05] tracking-[-0.055em] text-[#102b3a]">
+          What to work on next.
+        </h1>
+        <p className="mt-3 max-w-xl text-[15px] leading-6 text-[#66818c]">
+          StudySync ranks your open work by how soon it is due and how long it takes, then fits it into the time you
+          say you have.
+        </p>
+      </div>
+
+      <Card className="mt-8 border-0 bg-[#0d2b3a] py-0 text-white shadow-[0_14px_36px_rgb(13_43_58/18%)]">
+        <CardHeader className="px-5 pb-2 pt-5 sm:px-6 sm:pt-6">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-2xl bg-white/10 text-[#62d2be]">
+              <Target className="size-5" />
+            </div>
+            <div>
+              <CardTitle className="text-xl tracking-[-0.035em] text-white">Work on this next</CardTitle>
+              <CardDescription className="mt-1 text-white/55">
+                Your three most urgent assignments right now.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="px-5 pb-6 pt-4 sm:px-6">
+          {ranked.length ? (
+            <ol className="space-y-3">
+              {ranked.slice(0, 3).map((assignment, index) => (
+                <li
+                  key={assignment.id}
+                  className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3"
+                >
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[#62d2be] text-sm font-bold text-[#0d2b3a]">
+                    {index + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[15px] font-semibold text-white">{assignment.title}</p>
+                    <p className="mt-1 inline-flex items-center gap-2 text-sm text-white/60">
+                      <span
+                        className="size-2.5 rounded-full border border-white/20"
+                        style={{ backgroundColor: getCourseColor(assignment.course, courseColors) }}
+                        aria-hidden="true"
+                      />
+                      {assignment.course}
+                    </p>
+                    <p className={`mt-1 text-xs ${isOverdue(assignment.dueAt) ? "font-semibold text-[#ff9c8f]" : "text-white/45"}`}>
+                      {recommendationReason(assignment)}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-sm leading-6 text-white/55">
+              Nothing open right now. Add an assignment and it will be ranked here.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <div className="mt-5 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <Card className="border-0 bg-white py-0 shadow-[0_12px_34px_rgb(16_43_58/6%)]">
+          <CardHeader className="border-b border-[#e6eef0] px-5 py-5 sm:px-6">
+            <CardTitle className="text-xl tracking-[-0.035em] text-[#173746]">Your next seven days</CardTitle>
+            <CardDescription className="mt-1.5 text-[#78909b]">
+              Work is placed on the earliest days that fit, and never after its deadline.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-0">
+            <div className="divide-y divide-[#edf2f4]">
+              {schedule.days.map((day) => (
+                <div key={day.date.toISOString()} className="px-5 py-4 sm:px-6">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold text-[#173746]">
+                      {isToday(day.date)
+                        ? "Today"
+                        : isTomorrow(day.date)
+                          ? "Tomorrow"
+                          : new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric" }).format(day.date)}
+                    </p>
+                    <p className="text-xs font-medium text-[#78909b]">
+                      {formatStudyTime(day.used)} of {formatStudyTime(day.capacity)}
+                    </p>
+                  </div>
+                  {day.blocks.length ? (
+                    <ul className="mt-3 space-y-2">
+                      {day.blocks.map((block) => (
+                        <li
+                          key={`${day.date.toISOString()}-${block.assignment.id}`}
+                          className="flex items-center gap-3 rounded-xl bg-[#f7fafb] px-3 py-2"
+                        >
+                          <span
+                            className="h-8 w-1 shrink-0 rounded-full"
+                            style={{ backgroundColor: getCourseColor(block.assignment.course, courseColors) }}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-[#173746]">{block.assignment.title}</p>
+                            <p className="text-xs text-[#78909b]">{block.assignment.course}</p>
+                          </div>
+                          <span className="shrink-0 text-xs font-semibold text-[#2f9584]">
+                            {formatStudyTime(block.minutes)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-2 text-xs text-[#a9b9be]">Nothing scheduled.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+            {schedule.unscheduled.length ? (
+              <div className="mx-5 mb-5 mt-5 flex items-start gap-3 rounded-2xl border border-[#f3b1a9] bg-[#fff1ef] px-4 py-3.5 text-[#a93e35] sm:mx-6">
+                <AlertTriangle className="mt-0.5 size-5 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold">
+                    {schedule.unscheduled.length} {schedule.unscheduled.length === 1 ? "assignment does" : "assignments do"} not fit
+                  </p>
+                  <p className="mt-1 text-sm leading-5">
+                    There is not enough study time before the deadline for: {schedule.unscheduled.map((a) => a.title).join(", ")}.
+                    Raise your available time below, or start earlier.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="border-0 bg-white py-0 shadow-[0_12px_34px_rgb(16_43_58/6%)]">
+          <CardHeader className="px-5 pb-2 pt-5 sm:px-6 sm:pt-6">
+            <CardTitle className="text-xl tracking-[-0.035em] text-[#173746]">When can you study?</CardTitle>
+            <CardDescription className="mt-1.5 text-[#78909b]">
+              Hours you can give each day. The plan above uses these.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="px-5 pb-6 pt-4 sm:px-6">
+            <div className="space-y-2.5">
+              {DAY_LABELS.map((label, index) => (
+                <div key={label} className="flex items-center justify-between gap-3">
+                  <Label htmlFor={`availability-${index}`} className="text-[#52717c]">
+                    {label}
+                  </Label>
+                  <Input
+                    id={`availability-${index}`}
+                    type="number"
+                    min="0"
+                    max="24"
+                    step="0.5"
+                    value={String(availability[index] / 60)}
+                    onChange={(event) => {
+                      const hours = Number(event.target.value);
+                      const minutes = Number.isFinite(hours) ? Math.max(0, Math.min(1440, Math.round(hours * 60))) : 0;
+                      setAvailability((current) => current.map((value, i) => (i === index ? minutes : value)));
+                    }}
+                    className="h-9 w-24 border-[#d8e4e7] text-right text-[#173746] focus-visible:border-[#62b2a5] focus-visible:ring-[#62b2be]/25"
+                  />
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 rounded-xl bg-[#f7fafb] px-3 py-2.5 text-xs leading-5 text-[#52717c]">
+              {formatStudyTime(weeklyCapacity)} available this week · {formatStudyTime(weeklyWorkload)} of work open
+              {weeklyWorkload > weeklyCapacity ? (
+                <span className="font-semibold text-[#a93e35]"> · you are over capacity</span>
+              ) : null}
+            </div>
+
+            <Button
+              type="button"
+              onClick={() => void saveAvailability()}
+              disabled={saving}
+              className="mt-4 h-11 w-full rounded-xl bg-[#0d2b3a] font-semibold text-white hover:bg-[#173f50]"
+            >
+              {saving ? "Saving…" : "Save availability"}
+            </Button>
+
+            {error ? (
+              <p className="mt-3 rounded-xl border border-[#f29f95] bg-[#fff1ef] px-3 py-2 text-sm leading-5 text-[#a93e35]" role="alert">
+                {error}
+              </p>
+            ) : null}
+            {notice ? (
+              <p className="mt-3 rounded-xl border border-[#a9d9cf] bg-[#eefbf7] px-3 py-2 text-sm leading-5 text-[#287568]" role="status">
+                {notice}
+              </p>
+            ) : null}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const auth = useStudySyncAuth();
   const localPreviewMode =
@@ -1835,6 +2163,14 @@ export default function Home() {
                 >
                   <LayoutDashboard className={`size-[18px] ${view === "planner" ? "text-[#62d2be]" : "text-white/50"}`} />
                   Planner
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView("plan")}
+                  className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm font-semibold transition-colors ${view === "plan" ? "bg-white/10 text-white" : "text-white/60 hover:bg-white/[0.06] hover:text-white"}`}
+                >
+                  <Target className={`size-[18px] ${view === "plan" ? "text-[#62d2be]" : "text-white/50"}`} />
+                  Study plan
                 </button>
                 <button
                   type="button"
@@ -2381,6 +2717,13 @@ export default function Home() {
               </div>
             </div>
               </>
+            ) : view === "plan" && accountClient ? (
+              <StudyPlanView
+                client={accountClient}
+                assignments={assignments}
+                courseColors={courseColors}
+                metadata={userMetadata}
+              />
             ) : view === "calendar" ? (
               <CalendarView assignments={assignments} courseColors={courseColors} onEdit={openEditDialog} />
             ) : view === "completed" ? (

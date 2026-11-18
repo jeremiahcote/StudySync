@@ -63,16 +63,7 @@ In Supabase Authentication > URL Configuration, add the StudySync site URL as an
 
 ## Canvas assignment import
 
-StudySync can connect each user to their own Canvas account, load active classes, and import assignments from all classes or only the classes the user selects. Imported assignments are matched by their Canvas assignment ID, so syncing them again updates the existing planner item instead of creating a duplicate.
-
-Canvas access tokens are sent to the Worker over HTTPS and encrypted with AES-GCM before they are stored in D1. The browser never receives the saved token. Set one separate 32-byte, base64-encoded encryption key as a Cloudflare secret before using the Canvas connection:
-
-```sh
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-npx wrangler secret put CANVAS_TOKEN_ENCRYPTION_KEY --config dist/server/wrangler.json
-```
-
-Do not commit the generated key or a Canvas access token. Each user should connect their own Canvas account from the StudySync interface.
+Canvas import is not available. The planner shows it as "Coming soon" and no Canvas connection can be made from the interface. Assignments are entered manually from the Add an assignment form.
 
 ## Deploying to your own Cloudflare account
 
@@ -105,7 +96,6 @@ Store the Supabase settings in Cloudflare, entering each value when Wrangler pro
 ```sh
 npx wrangler secret put SUPABASE_URL --config dist/server/wrangler.json
 npx wrangler secret put SUPABASE_PUBLISHABLE_KEY --config dist/server/wrangler.json
-npx wrangler secret put CANVAS_TOKEN_ENCRYPTION_KEY --config dist/server/wrangler.json
 npx wrangler secret put RESEND_API_KEY --config dist/server/wrangler.json
 npx wrangler secret put REMINDER_CRON_SECRET --config dist/server/wrangler.json
 ```
