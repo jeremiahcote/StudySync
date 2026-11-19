@@ -1327,6 +1327,18 @@ function RemindersView({ client, email, metadata, accessToken }: RemindersViewPr
             <p className="text-sm leading-6 text-[#52717c]">
               Choose when you want a reminder for assignments that are still on your planner. Your local time zone is used.
             </p>
+            {!emailEnabled ? (
+              <p
+                className="mt-4 flex items-start gap-2 rounded-xl border border-[#f5d293] bg-[#fff8e8] px-3 py-2.5 text-sm leading-5 text-[#9a6b16]"
+                role="status"
+              >
+                <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                <span>
+                  <b>Reminders are off.</b> Nothing will be emailed to you. Changing the timing below does not turn
+                  them on — use the switch above, then save.
+                </span>
+              </p>
+            ) : null}
             <div className="mt-5 space-y-2">
               <Label className="text-[#52717c]">Reminder timing</Label>
               <Select value={emailTiming} onValueChange={(value) => setEmailTiming(value as ReminderTiming)}>
@@ -1440,6 +1452,19 @@ function recommendationReason(assignment: Assignment) {
   return `Due in ${days} ${days === 1 ? "day" : "days"} · needs ${effort}${tight ? " · tight fit" : ""}`;
 }
 
+// Testers read the ranking as date-only and did not realise the time estimate moves an
+// assignment up, so say it outright on the rows where that is what happened.
+function rankedAheadNote(assignment: Assignment, rankedBelow: Assignment[]) {
+  const due = new Date(assignment.dueAt).getTime();
+  const overtakes = rankedBelow.some(
+    (other) =>
+      new Date(other.dueAt).getTime() < due &&
+      other.estimatedMinutes < assignment.estimatedMinutes,
+  );
+  if (!overtakes) return null;
+  return `Ahead of work due sooner because it needs ${formatStudyTime(assignment.estimatedMinutes)}`;
+}
+
 type ScheduledBlock = { assignment: Assignment; minutes: number };
 type ScheduledDay = { date: Date; capacity: number; blocks: ScheduledBlock[]; used: number };
 
@@ -1491,9 +1516,12 @@ type StudyPlanViewProps = {
 
 function StudyPlanView({ client, assignments, courseColors, metadata }: StudyPlanViewProps) {
   const [availability, setAvailability] = useState(() => availabilityFromMetadata(metadata));
+  const [savedAvailability, setSavedAvailability] = useState(() => availabilityFromMetadata(metadata));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  const unsaved = availability.some((minutes, index) => minutes !== savedAvailability[index]);
 
   const activeAssignments = useMemo(
     () => assignments.filter((assignment) => !isComplete(assignment)),
@@ -1522,7 +1550,8 @@ function StudyPlanView({ client, assignments, courseColors, metadata }: StudyPla
         data: { ...metadata, studysync_availability: availability },
       });
       if (result.error) throw result.error;
-      setNotice("Your study availability has been saved.");
+      setSavedAvailability(availability);
+      setNotice("Saved. Your plan now uses these hours.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "We could not save your availability.");
     } finally {
@@ -1581,6 +1610,11 @@ function StudyPlanView({ client, assignments, courseColors, metadata }: StudyPla
                     <p className={`mt-1 text-xs ${isOverdue(assignment.dueAt) ? "font-semibold text-[#ff9c8f]" : "text-white/45"}`}>
                       {recommendationReason(assignment)}
                     </p>
+                    {rankedAheadNote(assignment, ranked.slice(index + 1)) ? (
+                      <p className="mt-1 text-xs font-medium text-[#62d2be]">
+                        {rankedAheadNote(assignment, ranked.slice(index + 1))}
+                      </p>
+                    ) : null}
                   </div>
                 </li>
               ))}
@@ -1693,20 +1727,30 @@ function StudyPlanView({ client, assignments, courseColors, metadata }: StudyPla
               ))}
             </div>
 
-            <div className="mt-4 rounded-xl bg-[#f7fafb] px-3 py-2.5 text-xs leading-5 text-[#52717c]">
+            <p className="mt-3 text-xs leading-5 text-[#78909b]">
+              Set a day to 0 if you cannot study that day. The plan will skip it.
+            </p>
+
+            <div className="mt-3 rounded-xl bg-[#f7fafb] px-3 py-2.5 text-xs leading-5 text-[#52717c]">
               {formatStudyTime(weeklyCapacity)} available this week · {formatStudyTime(weeklyWorkload)} of work open
               {weeklyWorkload > weeklyCapacity ? (
                 <span className="font-semibold text-[#a93e35]"> · you are over capacity</span>
               ) : null}
             </div>
 
+            {unsaved ? (
+              <p className="mt-3 rounded-xl border border-[#f5d293] bg-[#fff8e8] px-3 py-2 text-xs font-semibold leading-5 text-[#9a6b16]" role="status">
+                You have unsaved changes. The plan above is previewing them.
+              </p>
+            ) : null}
+
             <Button
               type="button"
               onClick={() => void saveAvailability()}
-              disabled={saving}
-              className="mt-4 h-11 w-full rounded-xl bg-[#0d2b3a] font-semibold text-white hover:bg-[#173f50]"
+              disabled={saving || !unsaved}
+              className="mt-3 h-11 w-full rounded-xl bg-[#0d2b3a] font-semibold text-white hover:bg-[#173f50] disabled:opacity-60"
             >
-              {saving ? "Saving…" : "Save availability"}
+              {saving ? "Saving…" : unsaved ? "Save availability" : "Availability saved"}
             </Button>
 
             {error ? (
